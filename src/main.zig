@@ -7,6 +7,7 @@ const Node = struct {
     parent: ?*Node,
     left: ?*Node,
     right: ?*Node,
+    visited: bool,
 };
 
 pub fn main() !void {
@@ -37,9 +38,12 @@ pub fn main() !void {
     // var file = try std.fs.cwd().openFile(.{});
      var file = try std.fs.cwd().openFile(filepath, .{});
     defer file.close();
-    const buffer = try allocator.alloc(u8, (try file.stat()).size);
+    var buffer = try allocator.alloc(u8, (try file.stat()).size);
     defer allocator.free(buffer);
     try file.reader().readNoEof(buffer);
+
+    // reading seems to add an extra \n at end
+    buffer = buffer[0..buffer.len - 1];
 
     //
     // CONSTRUCT ARRAY OF SYMBOL FREQUENCIES
@@ -52,11 +56,6 @@ pub fn main() !void {
         occurences_book[c] += 1;
     }
 
-//       defer for (occurences_book) |f, c| {
-         // if (f > 0)
-             // print("char: \"{c}\",\tascii: {d},\toccurences: {d}\n",
-                 // .{@intCast(u8, c), @intCast(u8, c), f});
-     //};
 
     //
     // SORT LETTER BOOK
@@ -86,12 +85,6 @@ pub fn main() !void {
         min_value = next_min_value;
     }
 
-
-     //  defer for (sorted_letter_book) |c, i| {
-          // if (c > 0)
-              // print("char: \"{c}\",\tascii: {d},\tindex: {d}\n", .{c, c, i});
-     // };
-
     //
     // BUILD BINARY TREE
     //
@@ -113,6 +106,7 @@ pub fn main() !void {
             .parent = null,
             .left = null,
             .right = null,
+            .visited = false,
         };
         try leaf_queue.enqueue(&nodes[i].?);
     }
@@ -123,10 +117,12 @@ pub fn main() !void {
         var lowest_nodes: [2]*Node = [2]*Node{undefined,undefined};
 
         for (lowest_nodes) |_, i| {
-            if (leaf_queue.count == 0) {
-                lowest_nodes[i] = try sapling_queue.dequeue();
-            } else if (sapling_queue.count == 0) {
+            // this ones first because ties going to leaf queue is more optimal
+            // for minimizing code length variance
+            if (sapling_queue.count == 0) { 
                 lowest_nodes[i] = try leaf_queue.dequeue();
+            } else if (leaf_queue.count == 0) {
+                lowest_nodes[i] = try sapling_queue.dequeue();
             } else if (leaf_queue.get_front().weight <= sapling_queue.get_front().weight) {
                 lowest_nodes[i] = try leaf_queue.dequeue();
             } else {
@@ -140,10 +136,10 @@ pub fn main() !void {
             .parent = null,
             .left = lowest_nodes[0],
             .right = lowest_nodes[1],
+            .visited = false,
         };
         var internal_parent = &nodes[nodes_index].?;
         nodes_index += 1;
-
 
         lowest_nodes[0].parent = internal_parent;
         lowest_nodes[1].parent = internal_parent;
@@ -151,49 +147,63 @@ pub fn main() !void {
         try sapling_queue.enqueue(internal_parent);
     }
 
-    const root_node: *Node = if (leaf_queue.count > 0) try leaf_queue.dequeue()
-                            else try sapling_queue.dequeue();
-
-    // var tmp_node: Node = root_node.*;
-    // while (tmp_node.left != null) {
-        // tmp_node = tmp_node.left.?.*;
-        // print("{?}\n",.{tmp_node.symbol});
-    // }
-
+    const root_node: *Node =
+        if (leaf_queue.count > 0) try leaf_queue.dequeue()
+        else try sapling_queue.dequeue();
 
     //
-    // BUILD DICTIONARY
+    // BUILD HUFFMAN TREE AND DICTIONARY
     //
 
-    // TODO: replace with hashmap
-    const DictionaryEntry = struct {letter: u8, code: usize};
-    var dictionary: [256]?DictionaryEntry = [_]?DictionaryEntry {null} ** 256;
-    var code: usize = 0b1;
-    _ = dictionary;
-    var traversal_stack: [513]?*Node = [_]?*Node{null} ** 513;
-    var traversal_node: ?*Node = root_node;
+    // index number is ascii char, value is huffman code
+    var dictionary: [256]?usize = [_]?usize {null} ** 256;
+
+    const HistoryNode = struct {
+        node: *Node,
+        path: usize,
+    };
+
+    var traversal_stack: [513]?HistoryNode = [_]?HistoryNode {null} ** 513;
     var traversal_stack_top: usize = 1;
-    while (traversal_stack_top > 0) { 
-        while (traversal_node != null) {
-            traversal_stack[traversal_stack_top] = traversal_node;
+    traversal_stack[0] = HistoryNode{ .node = root_node, .path = 0b1};
+    var traverser: HistoryNode = undefined;
+    while (traversal_stack_top > 0) {
+        traverser = traversal_stack[traversal_stack_top - 1].?;
+        traversal_stack_top -= 1;
+
+        if (traverser.node.right != null) {
+            const new_path: usize = (traverser.path << 1) | 1;
+
+            traversal_stack[traversal_stack_top] = HistoryNode {
+                .node= traverser.node.right.?,
+                .path= new_path,
+            };
+
             traversal_stack_top += 1;
-            traversal_node = traversal_node.?.left;
-            code = (code << 1) | 0;
         }
-        if (traversal_node == null) {
-            var popped: ?*Node = traversal_stack[traversal_stack_top - 1];
-            if (popped == null) break;
-            var popped_symbol = popped.?.symbol orelse 0;
-            if (popped_symbol != 0)
-                print("{c} - {b}\n", .{popped_symbol, code});
 
-            traversal_stack_top -= 1;
-            code = code >> 1;
+        if (traverser.node.left != null) {
+            const new_path: usize = (traverser.path << 1) | 0;
 
-            traversal_node = popped.?.right;
-            code = (code << 1) | 1;
+            traversal_stack[traversal_stack_top] = HistoryNode {
+                .node= traverser.node.left.?,
+                .path= new_path,
+            };
+            traversal_stack_top += 1;
+        }
+
+        if (traverser.node.right == null and traverser.node.left == null) {
+            print("{c} - {b}\n", .{traverser.node.symbol orelse 0, traverser.path});
+            dictionary[traverser.node.symbol orelse unreachable] = traverser.path;
         }
     }
+    // print("{any}", .{dictionary});
+
+    //
+    // WRITE COMPRESSED OUTPUT
+    //
+
+
 }
 
 // basic circular buffer queue  NOTE: .front and .back ranges are questionable
