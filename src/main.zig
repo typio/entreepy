@@ -1,5 +1,6 @@
 const std = @import("std");
 const print = std.debug.print;
+const Allocator = std.mem.Allocator;
 
 const Node = struct {
     symbol: ?u8,
@@ -10,40 +11,41 @@ const Node = struct {
     visited: bool,
 };
 
-pub fn main() !void {
-    const start_time = std.time.microTimestamp();
-    defer print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() - start_time});
-
-    var args_gpa = std.heap.GeneralPurposeAllocator(.{
-        .enable_memory_limit = false,
-        .safety = false
-    }){};
-    defer _ = args_gpa.deinit();
-    const args_allocator = args_gpa.allocator();
-    var args = try std.process.argsWithAllocator(args_allocator);
-    _ = args.skip();
-    const filepath: []const u8 = args.next() orelse "res/nice.shakespeare.txt";
-
+fn read_text_file(allocator: *const Allocator, filepath: []const u8) ![]const u8 {
     //
     // ALLOCATE TEXT FILE
     //
 
-    // want to put this in a function but also want to defer free in main scope
+    var file = try std.fs.cwd().openFile(filepath, .{});
+    defer file.close();
+    const buffer = try allocator.alloc(u8, (try file.stat()).size);
+    try file.reader().readNoEof(buffer);
+    return buffer;
+}
+
+pub fn main() !void {
+    const start_time = std.time.microTimestamp();
+    defer print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() - start_time});
+
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .enable_memory_limit = false,
         .safety = false
     }){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
-    // var file = try std.fs.cwd().openFile(.{});
-     var file = try std.fs.cwd().openFile(filepath, .{});
-    defer file.close();
-    var buffer = try allocator.alloc(u8, (try file.stat()).size);
-    defer allocator.free(buffer);
-    try file.reader().readNoEof(buffer);
 
-    // reading seems to add an extra \n at end
-    buffer = buffer[0..buffer.len - 1];
+    var args = try std.process.argsWithAllocator(allocator);
+    _ = args.skip();
+
+    const filepath: []const u8 = args.next() orelse "res/nice.shakespeare.txt";
+
+    var text = try read_text_file(&allocator, filepath);
+
+    // NOTE: Does this still free the full amount since I mutate it?
+    defer allocator.free(text);
+
+    // Reading seems to add an extra \n at end
+    text =  text[0..text.len - 1];
 
     //
     // CONSTRUCT ARRAY OF SYMBOL FREQUENCIES
@@ -52,10 +54,9 @@ pub fn main() !void {
     // array where index is the ascii char and value is number of occurences
     var occurences_book = [_]usize{0} ** 256;
 
-    for (buffer) |c| {
+    for (text) |c| {
         occurences_book[c] += 1;
     }
-
 
     //
     // SORT LETTER BOOK
@@ -119,7 +120,7 @@ pub fn main() !void {
         for (lowest_nodes) |_, i| {
             // this ones first because ties going to leaf queue is more optimal
             // for minimizing code length variance
-            if (sapling_queue.count == 0) { 
+            if (sapling_queue.count == 0) {
                 lowest_nodes[i] = try leaf_queue.dequeue();
             } else if (leaf_queue.count == 0) {
                 lowest_nodes[i] = try sapling_queue.dequeue();
@@ -156,54 +157,218 @@ pub fn main() !void {
     //
 
     // index number is ascii char, value is huffman code
-    var dictionary: [256]?usize = [_]?usize {null} ** 256;
+    const Code = struct {
+        data: [12] u1,
+        length: u8,
+    };
+
+    var dictionary: [256]Code = [_]Code {Code{.data = [_]u1 {0} ** 12, .length = 0}} ** 256;
 
     const HistoryNode = struct {
         node: *Node,
-        path: usize,
+        path: Code,
     };
 
     var traversal_stack: [513]?HistoryNode = [_]?HistoryNode {null} ** 513;
     var traversal_stack_top: usize = 1;
-    traversal_stack[0] = HistoryNode{ .node = root_node, .path = 0b1};
+    traversal_stack[0] = HistoryNode {
+        .node = root_node,
+        .path = Code {
+            .data = [_]u1{0} ** 12,
+            .length = 0,
+        },
+    };
     var traverser: HistoryNode = undefined;
     while (traversal_stack_top > 0) {
         traverser = traversal_stack[traversal_stack_top - 1].?;
         traversal_stack_top -= 1;
 
         if (traverser.node.right != null) {
-            const new_path: usize = (traverser.path << 1) | 1;
+            // const new_path: usize = (traverser.path << 1) | 1;
 
-            traversal_stack[traversal_stack_top] = HistoryNode {
-                .node= traverser.node.right.?,
-                .path= new_path,
+            var new_traverser = HistoryNode {
+                .node = traverser.node.right.?,
+                .path = traverser.path,
             };
+            new_traverser.path.data[traverser.path.length] = 0b1;
+            new_traverser.path.length += 1;
+
+            traversal_stack[traversal_stack_top] = new_traverser;
 
             traversal_stack_top += 1;
         }
 
         if (traverser.node.left != null) {
-            const new_path: usize = (traverser.path << 1) | 0;
-
-            traversal_stack[traversal_stack_top] = HistoryNode {
-                .node= traverser.node.left.?,
-                .path= new_path,
+            var new_traverser = HistoryNode {
+                .node = traverser.node.left.?,
+                .path = traverser.path,
             };
+            new_traverser.path.data[traverser.path.length] = 0b0;
+            new_traverser.path.length += 1;
+
+            traversal_stack[traversal_stack_top] = new_traverser;
+
             traversal_stack_top += 1;
         }
 
         if (traverser.node.right == null and traverser.node.left == null) {
-            print("{c} - {b}\n", .{traverser.node.symbol orelse 0, traverser.path});
+            print("{c} - ", .{traverser.node.symbol orelse 0});
+            for (traverser.path.data[0..traverser.path.length]) |b| {
+                print("{b}", .{b});
+            }
+            print("\n", .{});
             dictionary[traverser.node.symbol orelse unreachable] = traverser.path;
         }
     }
-    // print("{any}", .{dictionary});
 
     //
-    // WRITE COMPRESSED OUTPUT
+    // WRITE OUTPUT (COMPRESS)
     //
 
+    // write dictionary
+    const outfile = try std.fs.cwd().createFile(
+        "res/out.ent",
+        .{ .read = true },
+    );
+    var out_writer = outfile.writer();
+    defer outfile.close();
 
+    var out_buffer = try allocator.alloc(u8, text.len * 4);
+    defer allocator.free(out_buffer);
+    var out_buffer_out = std.io.fixedBufferStream(out_buffer);
+    var bit_stream_writer = std.io.bitWriter(.Big, out_buffer_out.writer());
+
+     // var bits_pushed: usize = 0;
+     // var current_byte: u8 = 0b0;
+
+    // write dictionary as:
+    // | ascii value - u8 | length of code - u8 | code - n bits |
+    for (dictionary) |code, i| {
+        if (code.length > 0) {
+            try bit_stream_writer.writeBits(i, 8);
+            try bit_stream_writer.writeBits(code.length, 8);
+             for (code.data[0..code.length]) |b| {
+                try bit_stream_writer.writeBits(b, 1);
+             }
+        }
+    }
+
+    // write compressed bits
+//     for (text) |char| {
+        // var code = dictionary[char];
+        // for (code.data[0..code.length]) |b| {
+            // current_byte <<= 1;
+            // current_byte |= b;
+            // // print("{b}\n", .{current_byte});
+            // bits_pushed += 1;
+            // if (bits_pushed == 8) {
+                // try out_writer.writeInt(u8, current_byte, .Little);
+                // current_byte = 0b0;
+                // bits_pushed = 0;
+            // }
+        // }
+    // }
+    try bit_stream_writer.flushBits();
+    try out_writer.writeAll(out_buffer[0..]);
+
+    //
+    // READ FILE (DECOMPRESS)
+    //
+     var compressed_text = try read_text_file(&allocator, "res/out.ent");
+     defer allocator.free(compressed_text);
+
+     var reading_dict_letter: bool = true;
+     var reading_dict_code_len: bool = false;
+     var reading_dict_code: bool = false;
+
+    var decode_dictionary: [256]Code = [_]Code {Code{.data = [_]u1 {0} ** 12, .length = 0}} ** 256;
+
+    var current_letter: u8 = 0;
+    var current_code_length: u8 = 0;
+    var current_code_data: usize = 0;
+
+    var pos: usize = 0;  // bit pos in byte
+    var build_bits: usize = 0b0;
+    var i: usize = 0; // bit pos in current read
+    var letters_read: u8 = 0;
+    for (compressed_text) |byte| {
+        if (letters_read > 5) break;
+        pos = 0;
+        read: while (true) {
+            if (reading_dict_letter) {
+                while (i <= 7) {
+                    if (pos > 7) break :read;
+                    build_bits <<= 1;
+                    build_bits |= (byte >> @truncate(u3, 7 - pos)) & 1;
+                    pos += 1;
+                    i += 1;
+                }
+
+                print("{c}\n", .{@truncate(u8, build_bits)});
+                current_letter = @truncate(u8, build_bits);
+
+                reading_dict_letter = false;
+                reading_dict_code_len = true;
+
+                build_bits = 0b0;
+                i = 0;
+             }
+
+             if (reading_dict_code_len) {
+                while (i <= 7) {
+                    if (pos > 7) break :read;
+                    build_bits <<= 1;
+                    build_bits |= (byte >> @truncate(u3, 7 - pos)) & 1;
+                    pos += 1;
+                    i += 1;
+                }
+
+                current_code_length = @truncate(u8, build_bits);
+
+                decode_dictionary[current_letter].length = current_code_length;
+
+                reading_dict_code_len = false;
+                reading_dict_code = true;
+
+                build_bits = 0b0;
+                i = 0;
+             }
+
+             if (reading_dict_code) {
+                while (i < current_code_length) {
+                    if (pos > 7) break :read;
+                    build_bits <<= 1;
+                    build_bits |= (byte >> @truncate(u3, 7 - pos)) & 1;
+
+                    decode_dictionary[current_letter].data[i] = @truncate(u1, (byte >> @truncate(u3, 7 - pos)) & 1);
+
+                    pos += 1;
+                    i += 1;
+                }
+
+                print("{b}\n", .{build_bits});
+                current_code_data = build_bits;
+
+                letters_read += 1;
+
+                reading_dict_code = false;
+                reading_dict_letter = true;
+
+                build_bits = 0b0;
+                i = 0;
+             }
+         }
+     }
+
+     for (decode_dictionary) |e, j| {
+        if (e.length > 0) {
+            print("{any}\n", .{decode_dictionary[j]});
+        }
+     }
+}
+
+fn nth_bit(byte: u8, pos: usize) u1 {
+    return (byte >> pos) & 1;
 }
 
 // basic circular buffer queue  NOTE: .front and .back ranges are questionable
@@ -235,7 +400,6 @@ fn Queue(comptime T: type, comptime length: usize) type {
             }
 
             if (self.back > self.data.len) return QueueError.OutOfBounds;
-
             self.data[self.back - 1] = new_value;
             self.count += 1;
         }
@@ -261,10 +425,6 @@ fn Queue(comptime T: type, comptime length: usize) type {
 
         fn get_front(self: Self) T {
             return self.data[self.front].?;
-        }
-
-        fn get_nth(self: Self, n: usize) T {
-            return self.data[(self.front + n) % self.data.len].?;
         }
     };
 }
