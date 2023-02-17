@@ -24,9 +24,8 @@ fn read_text_file(allocator: *const Allocator, filepath: []const u8) ![]const u8
 }
 
 pub fn main() !void {
-    const start_time = std.time.microTimestamp();
-    defer print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() - start_time});
-
+    print("doing compression\n", .{});
+    const start_compression_time = std.time.microTimestamp();
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .enable_memory_limit = false,
         .safety = false
@@ -45,7 +44,7 @@ pub fn main() !void {
     defer allocator.free(text);
 
     // Reading seems to add an extra \n at end
-    text =  text[0..text.len - 1];
+    if (text.len > 0) text = text[0..text.len - 1];
 
     //
     // CONSTRUCT ARRAY OF SYMBOL FREQUENCIES
@@ -80,7 +79,7 @@ pub fn main() !void {
             // so ties (1+ c's with same o) with be resolved alphabetically
             if (o == min_value) {
                 sorted_letter_book[book_index] = @intCast(u8, c);
-                book_index += 1;
+                if (book_index < 255) book_index += 1;
             }
         }
         min_value = next_min_value;
@@ -224,10 +223,8 @@ pub fn main() !void {
     //
     // WRITE OUTPUT (COMPRESS)
     //
-
-    // write dictionary
     const outfile = try std.fs.cwd().createFile(
-        "res/out.ent",
+        "res/out.et",
         .{ .read = true },
     );
     var out_writer = outfile.writer();
@@ -238,62 +235,114 @@ pub fn main() !void {
     var out_buffer_out = std.io.fixedBufferStream(out_buffer);
     var bit_stream_writer = std.io.bitWriter(.Big, out_buffer_out.writer());
 
-     // var bits_pushed: usize = 0;
-     // var current_byte: u8 = 0b0;
+    var bits_written: usize = 0;
 
+    // write magic number
+    try bit_stream_writer.writeBits(@as(u24, 0xe7c0de), 24);
+    bits_written += 24;
+
+    // write dictionary length
+    var dictionary_length: u8 = 0;
+    for (dictionary) |code| {
+        if (code.length > 0) dictionary_length += 1;
+    }
+    try bit_stream_writer.writeBits(dictionary_length, 8);
+    bits_written += 8;
+
+    try bit_stream_writer.writeBits(@truncate(u32, text.len), 32);
+    bits_written += 32;
+
+    // write dictionary
     // write dictionary as:
     // | ascii value - u8 | length of code - u8 | code - n bits |
     for (dictionary) |code, i| {
         if (code.length > 0) {
             try bit_stream_writer.writeBits(i, 8);
+            bits_written += 8;
             try bit_stream_writer.writeBits(code.length, 8);
+            bits_written += 8;
              for (code.data[0..code.length]) |b| {
                 try bit_stream_writer.writeBits(b, 1);
+                bits_written += 1;
              }
         }
     }
+    try bit_stream_writer.flushBits();
+    // bits_written = bits_written + (8 - bits_written % 10);
 
     // write compressed bits
-//     for (text) |char| {
-        // var code = dictionary[char];
-        // for (code.data[0..code.length]) |b| {
-            // current_byte <<= 1;
-            // current_byte |= b;
-            // // print("{b}\n", .{current_byte});
-            // bits_pushed += 1;
-            // if (bits_pushed == 8) {
-                // try out_writer.writeInt(u8, current_byte, .Little);
-                // current_byte = 0b0;
-                // bits_pushed = 0;
-            // }
-        // }
-    // }
+    for (text) |char| {
+        var code = dictionary[char];
+        for (code.data[0..code.length]) |b| {
+           try bit_stream_writer.writeBits(b, 1);
+           bits_written += 1;
+        }
+    }
+
     try bit_stream_writer.flushBits();
-    try out_writer.writeAll(out_buffer[0..]);
+    // bits_written = bits_written + (8 - bits_written % 10);
+    try out_writer.writeAll(out_buffer[0.. bits_written / 8 + 3]);
+    //try out_writer.writeAll(out_buffer[0..]);
+
+    print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() - start_compression_time});
 
     //
     // READ FILE (DECOMPRESS)
     //
-     var compressed_text = try read_text_file(&allocator, "res/out.ent");
-     defer allocator.free(compressed_text);
+    const start_decompression_time = std.time.microTimestamp();
+    defer print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() - start_decompression_time});
 
-     var reading_dict_letter: bool = true;
-     var reading_dict_code_len: bool = false;
-     var reading_dict_code: bool = false;
+    print("doing decompression\n", .{});
+
+    const longest_allowed_code: u8 = 12;
+
+    const DecodeTableEntry = struct {
+         length: u8,
+         symbols: [longest_allowed_code+1]u8,
+    };
+
+    var compressed_text = try read_text_file(&allocator, "res/out.et");
+    defer allocator.free(compressed_text);
+
+    var reading_dict_letter: bool = true;
+    var reading_dict_code_len: bool = false;
+    var reading_dict_code: bool = false;
 
     var decode_dictionary: [256]Code = [_]Code {Code{.data = [_]u1 {0} ** 12, .length = 0}} ** 256;
+    var decode_dictionary_length: u8 = compressed_text[3];
+
+    var decode_body_length: u32 = compressed_text[4];
+    decode_body_length <<= 8;
+    decode_body_length |= compressed_text[5];
+    decode_body_length <<= 8;
+    decode_body_length |= compressed_text[6];
+    decode_body_length <<= 8;
+    decode_body_length |= compressed_text[7];
+
+
+    var longest_code: u8 = 0;
+    var shortest_code: usize = std.math.maxInt(usize);
+
+    const table_entries: usize = comptime std.math.pow(usize, 2, longest_allowed_code);
+    var decode_table: [table_entries]DecodeTableEntry = [_]DecodeTableEntry {
+        DecodeTableEntry {
+            .length = undefined,
+            .symbols = [_]u8 {0} ** (longest_allowed_code + 1),
+        }
+    } ** table_entries;
 
     var current_letter: u8 = 0;
     var current_code_length: u8 = 0;
     var current_code_data: usize = 0;
 
+    var global_pos: usize = 0;
     var pos: usize = 0;  // bit pos in byte
     var build_bits: usize = 0b0;
     var i: usize = 0; // bit pos in current read
     var letters_read: u8 = 0;
-    for (compressed_text) |byte| {
-        if (letters_read > 5) break;
+    for (compressed_text[8..]) |byte| {
         pos = 0;
+
         read: while (true) {
             if (reading_dict_letter) {
                 while (i <= 7) {
@@ -304,7 +353,6 @@ pub fn main() !void {
                     i += 1;
                 }
 
-                print("{c}\n", .{@truncate(u8, build_bits)});
                 current_letter = @truncate(u8, build_bits);
 
                 reading_dict_letter = false;
@@ -312,9 +360,9 @@ pub fn main() !void {
 
                 build_bits = 0b0;
                 i = 0;
-             }
+            }
 
-             if (reading_dict_code_len) {
+            if (reading_dict_code_len) {
                 while (i <= 7) {
                     if (pos > 7) break :read;
                     build_bits <<= 1;
@@ -325,29 +373,40 @@ pub fn main() !void {
 
                 current_code_length = @truncate(u8, build_bits);
 
+                if (current_code_length > longest_code) longest_code = current_code_length;
+                if (current_code_length < shortest_code) shortest_code = current_code_length;
+
                 decode_dictionary[current_letter].length = current_code_length;
+
 
                 reading_dict_code_len = false;
                 reading_dict_code = true;
 
                 build_bits = 0b0;
                 i = 0;
-             }
+            }
 
-             if (reading_dict_code) {
+            if (reading_dict_code) {
                 while (i < current_code_length) {
                     if (pos > 7) break :read;
                     build_bits <<= 1;
                     build_bits |= (byte >> @truncate(u3, 7 - pos)) & 1;
 
-                    decode_dictionary[current_letter].data[i] = @truncate(u1, (byte >> @truncate(u3, 7 - pos)) & 1);
+                    decode_dictionary[current_letter].data[i] = @truncate(
+                        u1,
+                        (byte >> @truncate(u3, 7 - pos)) & 1
+                    );
 
                     pos += 1;
                     i += 1;
                 }
 
-                print("{b}\n", .{build_bits});
                 current_code_data = build_bits;
+
+                decode_table[current_code_data].length = current_code_length;
+
+                decode_table[current_code_data].symbols[current_code_length] =
+                    current_letter;
 
                 letters_read += 1;
 
@@ -356,19 +415,79 @@ pub fn main() !void {
 
                 build_bits = 0b0;
                 i = 0;
-             }
-         }
-     }
-
-     for (decode_dictionary) |e, j| {
-        if (e.length > 0) {
-            print("{any}\n", .{decode_dictionary[j]});
+            }
         }
-     }
-}
+        global_pos += 1;
 
-fn nth_bit(byte: u8, pos: usize) u1 {
-    return (byte >> pos) & 1;
+        if (letters_read == decode_dictionary_length) {
+            break;
+        }
+    }
+
+    for (decode_dictionary) |e, j| {
+        if (e.length > 0) {
+            print("{c} - ", .{@truncate(u8, j)});
+            for (e.data) |b, bi| {
+               if (bi == e.length) break;
+               print("{b}", .{b});
+            }
+            print("\n", .{});
+        }
+    }
+
+    var window: u32 = 0;
+    var window_len: usize = 0;
+    var checking_code_len: usize = 2;
+    var testing_code: usize = 0;
+    var decoded_letters_read: usize = 0;
+
+    // print("short{d}\n", .{shortest_code});
+    for (compressed_text[8 + global_pos..]) |byte| {
+        window <<= 8;
+        window |= byte;
+        window_len += 8;
+
+        // while there are potential matches in window
+        decode_text: while (window_len >= longest_code) {
+            // loop through all possible code lengths, checking start of window for match
+            checking_code_len = shortest_code;
+            while (checking_code_len <= longest_code and window_len >= longest_code) {
+                if (decoded_letters_read >= decode_body_length) {
+                    break :decode_text;
+                }
+
+                if (window_len < checking_code_len) {
+                     break :decode_text;
+                }
+
+                testing_code = window &
+                    ((@as(u32, 0b1) << @truncate(u5, checking_code_len)) - 1)
+                    << @truncate(u5, window_len - checking_code_len);
+
+
+                testing_code >>= @truncate(u6, window_len - checking_code_len);
+
+                //print("{b} {d} {d} {b}\n", .{window, window_len, checking_code_len, testing_code});
+                //print("-{c}-\n",.{decode_table[0b111].symbol});
+
+                if (decode_table[testing_code].symbols[checking_code_len] > 0) {
+
+                    decoded_letters_read += 1;
+
+                    print("{c}", .{decode_table[testing_code].symbols[checking_code_len]});
+
+                    window = window & ((@as(u32, 0b1) <<
+                        @truncate(u5, window_len - checking_code_len)) - 1);
+
+                    window_len -= checking_code_len;
+
+                    checking_code_len = shortest_code;
+                }
+                checking_code_len += 1;
+            }
+        }
+    }
+    print("\n", .{});
 }
 
 // basic circular buffer queue  NOTE: .front and .back ranges are questionable
