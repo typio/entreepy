@@ -1,6 +1,6 @@
 # entreepy
 
-> ⚡ Huffman file compression
+> ⚡ Huffman compression
 
 The name is because binary trees + entropy coding.
 
@@ -41,11 +41,12 @@ Introduces the `.et` file format, identified by the magic number `e7 c0 de`.
 
 | length of body -> 4 bytes |
 
-| symbol -> 1 byte | for n symbols
+for n symbols:
+| symbol -> 1 byte |
 | symbol code length -> 1 byte |
 | symbol code -> m bits |
 
 | packed big-endian bitstream of codes | starting on new byte
 
-| end padding of 0s -> <=3 bytes |
+| 0 padding -> <=3 bytes |
 ```
