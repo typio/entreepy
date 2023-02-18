@@ -7,4 +7,6 @@ zig-out/
 /docgen_tmp/
 
 res/*
+!res/test.txt
 !res/nice.shakespeare.txt
+!res/a_midsummer_nights_dream.txt
