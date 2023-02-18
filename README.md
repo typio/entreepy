@@ -38,7 +38,6 @@ Introduces the `.et` file format, identified by the magic number `e7 c0 de`.
 ```bf
 | magic number -> 3 bytes |
 | (length of dictionary - 1) -> 1 byte |
-
 | length of body -> 4 bytes |
 
 for n symbols
