@@ -1,4 +1,8 @@
 const std = @import("std");
+// const cli = @import("zig-cli");
+
+const queue = @import("queue.zig");
+
 const print = std.debug.print;
 const Allocator = std.mem.Allocator;
 
@@ -15,7 +19,6 @@ fn read_text_file(allocator: *const Allocator, filepath: []const u8) ![]const u8
     //
     // ALLOCATE TEXT FILE
     //
-
     var file = try std.fs.cwd().openFile(filepath, .{});
     defer file.close();
     const buffer = try allocator.alloc(u8, (try file.stat()).size);
@@ -37,6 +40,13 @@ pub fn main() !void {
     _ = args.skip();
 
     const filepath: []const u8 = args.next() orelse "res/nice.shakespeare.txt";
+
+    // find file name
+    var filename_index: usize = filepath.len - 1;
+    while (filename_index > 0 and filepath[filename_index-1] != '/') {
+        filename_index -= 1;
+    }
+    const filename: []const u8 = filepath[filename_index..];
 
     var text = try read_text_file(&allocator, filepath);
 
@@ -95,8 +105,8 @@ pub fn main() !void {
     var nodes: [513]?Node = [_]?Node{null} ** 513;
     var nodes_index: u16 = 0;
 
-    var leaf_queue = Queue(*Node, 256){};
-    var sapling_queue = Queue(*Node, 256){};
+    var leaf_queue = queue.Queue(*Node, 256){};
+    var sapling_queue = queue.Queue(*Node, 256){};
 
     // add every letter as a leaf node to the leaf_queue
     for (sorted_letter_book[0..symbols_length]) |c, i| {
@@ -157,11 +167,11 @@ pub fn main() !void {
 
     // index number is ascii char, value is huffman code
     const Code = struct {
-        data: [12] u1,
+        data: u32,
         length: u8,
     };
 
-    var dictionary: [256]Code = [_]Code {Code{.data = [_]u1 {0} ** 12, .length = 0}} ** 256;
+    var dictionary: [256]Code = [_]Code {Code{.data = 0, .length = 0}} ** 256;
 
     const HistoryNode = struct {
         node: *Node,
@@ -173,7 +183,7 @@ pub fn main() !void {
     traversal_stack[0] = HistoryNode {
         .node = root_node,
         .path = Code {
-            .data = [_]u1{0} ** 12,
+            .data = 0,
             .length = 0,
         },
     };
@@ -183,13 +193,13 @@ pub fn main() !void {
         traversal_stack_top -= 1;
 
         if (traverser.node.right != null) {
-            // const new_path: usize = (traverser.path << 1) | 1;
-
             var new_traverser = HistoryNode {
                 .node = traverser.node.right.?,
                 .path = traverser.path,
             };
-            new_traverser.path.data[traverser.path.length] = 0b1;
+
+            new_traverser.path.data <<= 1;
+            new_traverser.path.data |= 1;
             new_traverser.path.length += 1;
 
             traversal_stack[traversal_stack_top] = new_traverser;
@@ -202,7 +212,8 @@ pub fn main() !void {
                 .node = traverser.node.left.?,
                 .path = traverser.path,
             };
-            new_traverser.path.data[traverser.path.length] = 0b0;
+            new_traverser.path.data <<= 1;
+            new_traverser.path.data |= 0;
             new_traverser.path.length += 1;
 
             traversal_stack[traversal_stack_top] = new_traverser;
@@ -211,11 +222,13 @@ pub fn main() !void {
         }
 
         if (traverser.node.right == null and traverser.node.left == null) {
-            print("{c} - ", .{traverser.node.symbol orelse 0});
-            for (traverser.path.data[0..traverser.path.length]) |b| {
-                print("{b}", .{b});
-            }
-            print("\n", .{});
+             print("{c} - ", .{traverser.node.symbol orelse 0});
+             var j: u8 = traverser.path.length;
+             while (j > 0) : (j -= 1) {
+                print("{b}", .{traverser.path.data >>
+                @truncate(u4, j - 1) & 1});
+             }
+             print("\n", .{});
             dictionary[traverser.node.symbol orelse unreachable] = traverser.path;
         }
     }
@@ -223,14 +236,22 @@ pub fn main() !void {
     //
     // WRITE OUTPUT (COMPRESS)
     //
+    const outfile_path: []const u8 = try std.fmt.allocPrint(
+        allocator,
+        "{s}.et",
+        .{ filepath },
+    );
+    defer allocator.free(outfile_path);
     const outfile = try std.fs.cwd().createFile(
-        "res/out.et",
+        outfile_path,
         .{ .read = true },
     );
     var out_writer = outfile.writer();
     defer outfile.close();
 
-    var out_buffer = try allocator.alloc(u8, text.len * 4);
+    // estimate for header length when every unique char is used
+    const max_header_length: usize = 7200;
+    var out_buffer = try allocator.alloc(u8, max_header_length + text.len);
     defer allocator.free(out_buffer);
     var out_buffer_out = std.io.fixedBufferStream(out_buffer);
     var bit_stream_writer = std.io.bitWriter(.Big, out_buffer_out.writer());
@@ -242,10 +263,11 @@ pub fn main() !void {
     bits_written += 24;
 
     // write dictionary length
-    var dictionary_length: u8 = 0;
+    var dictionary_length: usize = 0; // dictionary length - 1
     for (dictionary) |code| {
         if (code.length > 0) dictionary_length += 1;
     }
+    if (dictionary_length > 0) dictionary_length -= 1;
     try bit_stream_writer.writeBits(dictionary_length, 8);
     bits_written += 8;
 
@@ -261,10 +283,11 @@ pub fn main() !void {
             bits_written += 8;
             try bit_stream_writer.writeBits(code.length, 8);
             bits_written += 8;
-             for (code.data[0..code.length]) |b| {
-                try bit_stream_writer.writeBits(b, 1);
+            var j: usize = code.length;
+            while (j > 0) : (j -= 1) {
+                try bit_stream_writer.writeBits((code.data >> @truncate(u4, j - 1)) & 1, 1);
                 bits_written += 1;
-             }
+            }
         }
     }
     try bit_stream_writer.flushBits();
@@ -273,10 +296,11 @@ pub fn main() !void {
     // write compressed bits
     for (text) |char| {
         var code = dictionary[char];
-        for (code.data[0..code.length]) |b| {
-           try bit_stream_writer.writeBits(b, 1);
-           bits_written += 1;
-        }
+        var j: usize = code.length;
+            while (j > 0) : (j -= 1) {
+                try bit_stream_writer.writeBits((code.data >> @truncate(u4, j - 1)) & 1, 1);
+                bits_written += 1;
+            }
     }
 
     try bit_stream_writer.flushBits();
@@ -294,22 +318,28 @@ pub fn main() !void {
 
     print("doing decompression\n", .{});
 
-    const longest_allowed_code: u8 = 12;
-
-    const DecodeTableEntry = struct {
-         length: u8,
-         symbols: [longest_allowed_code+1]u8,
-    };
-
-    var compressed_text = try read_text_file(&allocator, "res/out.et");
+    var compressed_text = try read_text_file(&allocator, outfile_path);
     defer allocator.free(compressed_text);
+
+    const decode_file_path: []const u8 = try std.fmt.allocPrint(
+        allocator,
+        "res/decoded_{s}",
+        .{ filename },
+    );
+    defer allocator.free(decode_file_path);
+    const decode_file = try std.fs.cwd().createFile(
+        decode_file_path,
+        .{ .read = true },
+    );
+    defer decode_file.close();
+
+    var decode_writer = decode_file.writer();
 
     var reading_dict_letter: bool = true;
     var reading_dict_code_len: bool = false;
     var reading_dict_code: bool = false;
 
-    var decode_dictionary: [256]Code = [_]Code {Code{.data = [_]u1 {0} ** 12, .length = 0}} ** 256;
-    var decode_dictionary_length: u8 = compressed_text[3];
+    var decode_dictionary_length: usize = compressed_text[3] + 1;
 
     var decode_body_length: u32 = compressed_text[4];
     decode_body_length <<= 8;
@@ -319,17 +349,15 @@ pub fn main() !void {
     decode_body_length <<= 8;
     decode_body_length |= compressed_text[7];
 
-
     var longest_code: u8 = 0;
     var shortest_code: usize = std.math.maxInt(usize);
 
-    const table_entries: usize = comptime std.math.pow(usize, 2, longest_allowed_code);
-    var decode_table: [table_entries]DecodeTableEntry = [_]DecodeTableEntry {
-        DecodeTableEntry {
-            .length = undefined,
-            .symbols = [_]u8 {0} ** (longest_allowed_code + 1),
-        }
-    } ** table_entries;
+    // value is an array of symbols of same integer value indexed by code length
+    // (allows for distinguishing between 00 and 000 for example)
+    var decode_table = std.AutoHashMap(usize, [32]u8).init(
+        allocator,
+    );
+    defer decode_table.deinit();
 
     var current_letter: u8 = 0;
     var current_code_length: u8 = 0;
@@ -376,9 +404,6 @@ pub fn main() !void {
                 if (current_code_length > longest_code) longest_code = current_code_length;
                 if (current_code_length < shortest_code) shortest_code = current_code_length;
 
-                decode_dictionary[current_letter].length = current_code_length;
-
-
                 reading_dict_code_len = false;
                 reading_dict_code = true;
 
@@ -392,21 +417,17 @@ pub fn main() !void {
                     build_bits <<= 1;
                     build_bits |= (byte >> @truncate(u3, 7 - pos)) & 1;
 
-                    decode_dictionary[current_letter].data[i] = @truncate(
-                        u1,
-                        (byte >> @truncate(u3, 7 - pos)) & 1
-                    );
-
                     pos += 1;
                     i += 1;
                 }
 
                 current_code_data = build_bits;
 
-                decode_table[current_code_data].length = current_code_length;
-
-                decode_table[current_code_data].symbols[current_code_length] =
-                    current_letter;
+                // if table has code add another letter to entry orelse
+                // add new entry with new letter
+                var decode_entry = decode_table.get(current_code_data) orelse [_]u8{0} ** 32;
+                decode_entry[current_code_length - 1] = current_letter;
+                try decode_table.put(current_code_data, decode_entry);
 
                 letters_read += 1;
 
@@ -424,24 +445,12 @@ pub fn main() !void {
         }
     }
 
-    for (decode_dictionary) |e, j| {
-        if (e.length > 0) {
-            print("{c} - ", .{@truncate(u8, j)});
-            for (e.data) |b, bi| {
-               if (bi == e.length) break;
-               print("{b}", .{b});
-            }
-            print("\n", .{});
-        }
-    }
-
     var window: u32 = 0;
     var window_len: usize = 0;
     var checking_code_len: usize = 2;
     var testing_code: usize = 0;
     var decoded_letters_read: usize = 0;
 
-    // print("short{d}\n", .{shortest_code});
     for (compressed_text[8 + global_pos..]) |byte| {
         window <<= 8;
         window |= byte;
@@ -467,14 +476,14 @@ pub fn main() !void {
 
                 testing_code >>= @truncate(u6, window_len - checking_code_len);
 
-                //print("{b} {d} {d} {b}\n", .{window, window_len, checking_code_len, testing_code});
-                //print("-{c}-\n",.{decode_table[0b111].symbol});
-
-                if (decode_table[testing_code].symbols[checking_code_len] > 0) {
-
+                if (decode_table.contains(testing_code) and
+                  decode_table.get(testing_code).?[checking_code_len - 1] > 0) {
                     decoded_letters_read += 1;
 
-                    print("{c}", .{decode_table[testing_code].symbols[checking_code_len]});
+                    var c = decode_table.get(testing_code).?[checking_code_len -
+                    1];
+                    try decode_writer.writeByte(c);
+                    // print("{c}", .{c});
 
                     window = window & ((@as(u32, 0b1) <<
                         @truncate(u5, window_len - checking_code_len)) - 1);
@@ -487,100 +496,4 @@ pub fn main() !void {
             }
         }
     }
-    print("\n", .{});
 }
-
-// basic circular buffer queue  NOTE: .front and .back ranges are questionable
-fn Queue(comptime T: type, comptime length: usize) type {
-    const QueueError = error {
-        OutOfBounds,
-        QueueOverflow,
-        QueueUnderflow,
-    };
-
-    return struct {
-        count: usize = 0,
-        front: usize = 0,
-        back: usize = 0,
-        data: [length]?T = [_]?T{null} ** length,
-
-        const Self = @This();
-
-        fn enqueue(self: *Self, new_value: T) QueueError!void {
-            if ((self.back + 1) % (self.data.len + 1) == self.front) {
-                return QueueError.QueueOverflow;
-            }
-
-            if (self.count == 0) {
-                self.front = 0;
-                self.back = 1;
-            } else {
-                self.back = (self.back) % self.data.len + 1;
-            }
-
-            if (self.back > self.data.len) return QueueError.OutOfBounds;
-            self.data[self.back - 1] = new_value;
-            self.count += 1;
-        }
-
-        fn dequeue(self: *Self) QueueError!T {
-            if (self.count == 0) {
-                return QueueError.QueueUnderflow;
-            }
-
-            if (self.front == self.back - 1) {
-                const value = self.data[self.front] orelse QueueError.OutOfBounds;
-                self.front = 0;
-                self.back = 0;
-                self.count -= 1;
-                return value;
-            } else {
-                const value = self.data[self.front] orelse QueueError.OutOfBounds;
-                self.front = (self.front + 1) % self.data.len;
-                self.count -= 1;
-                return value;
-            }
-        }
-
-        fn get_front(self: Self) T {
-            return self.data[self.front].?;
-        }
-    };
-}
-
-test "queue" {
-    var q = Queue(u8, 4){};
-
-    // test filling partway then going back to empty
-    try q.enqueue(4);
-    try q.enqueue(8);
-    try std.testing.expectEqual(try q.dequeue(), 4);
-    try std.testing.expectEqual(try q.dequeue(), 8);
-
-    // test filling completely
-    try q.enqueue(7);
-    try q.enqueue(2);
-    try q.enqueue(3);
-    try q.enqueue(5);
-    try std.testing.expectEqual(try q.dequeue(), 7);
-    try std.testing.expectEqual(try q.dequeue(), 2);
-    try std.testing.expectEqual(try q.dequeue(), 3);
-    try std.testing.expectEqual(try q.dequeue(), 5);
-
-    // test wrapping
-    try q.enqueue(1);
-    try q.enqueue(2);
-    try std.testing.expectEqual(try q.dequeue(), 1);
-    try q.enqueue(3);
-    try q.enqueue(4);
-    try q.enqueue(5); // wraps and goes in index 0
-    try std.testing.expectEqual(try q.dequeue(), 2);
-    try std.testing.expectEqual(try q.dequeue(), 3);
-    try std.testing.expectEqual(try q.dequeue(), 4);
-    try std.testing.expectEqual(try q.dequeue(), 5);
-
-    try q.enqueue(42);
-    try std.testing.expectEqual(try q.dequeue(), 42);
-}
-
-
