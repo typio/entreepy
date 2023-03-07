@@ -27,7 +27,7 @@ Input file must be < 1 terabyte.
 
 I've developed a novel approach to decoding that utilizes a decode map. This map is keyed by the integer value of the code and stores a subarray of letters with matching code integer value - that is, the letters that correspond to codes with the same integer value - indexed by length minus one. For example, the map might include the following entries:
 
-`{ 2: [, a (10), e (010), ...], 5: [, _, _, t (0101), ...] }.`
+`{ 2: [_, a (10), e (010), ...], 5: [_, _, _, t (0101), ...] }.`
 
 By utilizing this decode map, decoding can be performed much more quickly than by traversing a binary tree bit by bit. I haven't come across a faster decoding approach than this one.
 
