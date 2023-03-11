@@ -22,8 +22,8 @@ const Node = struct {
 
 pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Writer, std_out: std.fs.File, flags: EncodeFlags) !void {
     const start_time = std.time.microTimestamp();
-    defer {if (flags.debug) std_out.writer().print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() -
-        start_time}) catch {};}
+    defer if (flags.debug) std_out.writer().print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() -
+        start_time}) catch {};
 
     // array where index is the ascii char and value is number of occurences
     var occurences_book = [_]usize{0} ** 256;

@@ -43,12 +43,12 @@ I've developed a novel approach to decoding that utilizes a decode map. This map
 
 By utilizing this decode map, decoding can be performed much more quickly than by traversing a binary tree bit by bit. I haven't come across a faster decoding approach than this one.
 
-#### Performance on MacBook Air M2, 8 GB RAM [@519f094](https://github.com/typio/entreepy/commit/519f094a3d04c15d1e34c9dad5af9095ceea4510)
+#### Current Performance on MacBook Air M2, 8 GB RAM
 | File | Original File Size | Compressed Size | Compression Time | Decompression Time |
 | ---- | :----------------: | :-------------: | :--------------: | :----------------: |
-| [Macbeth, Act V, Scene V](https://github.com/typio/entreepy/blob/main/res/nice.shakespeare.txt)   | 477 bytes | 374 bytes | 948μs | 2190μs |
-| [A Midsummer Night's Dream](https://github.com/typio/entreepy/blob/main/res/a_midsummer_nights_dream.txt) | ~ 115 KB | ~ 66 KB | 21ms | 258ms |
-| [The Complete Works of Shakespeare](https://ocw.mit.edu/ans7870/6/6.006/s08/lecturenotes/files/t8.shakespeare.txt) | ~ 5.5 MB | ~ 3.2 MB | 0.6s | 17s |
+| [Macbeth, Act V, Scene V](https://github.com/typio/entreepy/blob/main/res/nice.shakespeare.txt)   | 477 bytes | 374 bytes | 240μs | 950μs |
+| [A Midsummer Night's Dream](https://github.com/typio/entreepy/blob/main/res/a_midsummer_nights_dream.txt) | ~ 115 KB | ~ 66 KB | 2.2ms | 150ms |
+| [The Complete Works of Shakespeare](https://ocw.mit.edu/ans7870/6/6.006/s08/lecturenotes/files/t8.shakespeare.txt) | ~ 5.5 MB | ~ 3.2 MB | 0.1s | 7s |
 
 ### Compressed File Format (tentative)
 
