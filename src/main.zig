@@ -40,14 +40,7 @@ fn read_text_file(allocator: Allocator, filepath: []const u8) ![]const u8 {
 }
 
 fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
-    var options = Options{
-        .print = false,
-        .debug = false,
-        .dry = false,
-        .mode = Mode.None,
-        .file_in_path = undefined,
-        .file_out_path = undefined,
-    };
+    var options = Options{ .print = false, .debug = false, .dry = false, .mode = Mode.None, .file_in_path = undefined, .file_out_path = try allocator.alloc(u8, 0) };
 
     const help_text =
         \\File compression tool using huffman compression
@@ -172,7 +165,6 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
         }
     }
 
-    // NOTE: weirdish field access on an undefined []const u8
     if (options.file_out_path.len == 0) {
         if (options.mode == Mode.Compress) {
             options.file_out_path =
@@ -195,10 +187,11 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .enable_memory_limit = true, .safety = true }){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     const std_out = std.io.getStdOut();
+    defer std_out.close();
 
     const options = try run_cli(allocator, std_out);
     defer allocator.free(options.file_out_path);

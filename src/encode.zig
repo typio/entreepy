@@ -39,7 +39,7 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Wr
     // my naive custom sort, <256 passes, ~100 microseconds
     var book_index: u8 = 0;
     var min_value: usize = 1;
-    var next_min_value: usize = undefined;
+    var next_min_value: usize = 0;
     while (next_min_value != std.math.maxInt(usize)) {
         next_min_value = std.math.maxInt(usize);
         for (occurences_book, 0..) |o, c| {
