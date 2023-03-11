@@ -5,18 +5,80 @@ on:
       - main
 
 jobs:
+  # lint:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - uses: goto-bus-stop/setup-zig@v2
+  #       with:
+  #         version: master
+  #     - run: zig fmt --check src build.zig
+
+  test:
+    strategy:
+      matrix:
+        # os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: master
+      - run: zig build test
+
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{matrix.os}}
+        include:
+            - name: linux-x86_64
+              target: x86_64-linux
+              strip: strip=true
+              optimize: optimize=ReleaseSafe
+
+            - name: windows-x86_64
+              target: x86_64-windows
+              strip: strip=true
+              optimize: optimize=ReleaseSafe
+
+            - name: macos-aarch64
+              target: aarch64-macos
+              strip: strip=true
+              optimize: optimize=ReleaseSafe
+
+            - name: macos-x86
+              target: x86_64-macos
+              strip: strip=true
+              optimize: optimize=ReleaseSafe
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
       - uses: goto-bus-stop/setup-zig@v2
-      - run: zig build
-  lint:
-    runs-on: macos-latest
+        with:
+          version: master
+
+      - name: zig build -D${{ matrix.strip }} -D${{ matrix.optimize }} -Dtarget=${{ matrix.target }}
+        run: |
+          zig build -D${{ matrix.strip }} -D${{ matrix.optimize }} -Dtarget=${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: entreepy #-${{ matrix.name }}
+          path: zig-out/bin/* #entreepy-${{ matrix.name }}
+          retention-days: 1
+
+  create-release:
+    needs: [test, build]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: goto-bus-stop/setup-zig@v2
-      - run: zig fmt --check src/*.zig
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+      - name: Creating release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create v0.5.0 -t "0.5.0" -n "This is the first release right here :zap:" entreepy/entreepy*
