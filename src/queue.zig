@@ -2,7 +2,7 @@ const std = @import("std");
 
 // basic circular buffer queue  NOTE: .front and .back ranges are questionable
 pub fn Queue(comptime T: type, comptime length: usize) type {
-    const QueueError = error {
+    const QueueError = error{
         OutOfBounds,
         QueueOverflow,
         QueueUnderflow,

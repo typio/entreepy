@@ -6,18 +6,30 @@ The name is because binary trees + entropy coding.
 
 ### Usage
 
-Project is nearly fully functional, and will have release binaries
-after these are done
+```
+$ entreepy [options] [command] [file] [command options]
 
-- [ ] CLI is added
-- [ ] Bugs with large files are resolved
-- [ ] Code is cleaned up
+Options:
+    -h, --help     show help
+    -p, --print    print decompressed text to stdout
+    -t, --test     test/dry run, does not write to file
+    -d, --debug    print huffman code dictionary and performance times to stdout
 
-```bash
-$ ./entreepy # path to file from cwd
+Commands:
+    c    compress a file
+    d    decompress a file
+
+Command Options:
+    -o, --output    output file (default: [file].et or decoded_[file])
+
+Examples:
+    entreepy -d c text.txt -o text.txt.et
+    entreepy -ptd d text.txt.et
 ```
 
-Input file must be < 1 terabyte.
+Input file must be < 1 terabyte. I recommend keeping an uncompressed backup or testing the program's
+decompression before deleting the original, the program hasn't been robustly tested. Be sure to use
+the same version of the program to decompress as compress.
 
 ### Performance
 
@@ -38,7 +50,7 @@ By utilizing this decode map, decoding can be performed much more quickly than b
 | [A Midsummer Night's Dream](https://github.com/typio/entreepy/blob/main/res/a_midsummer_nights_dream.txt) | ~ 115 KB | ~ 66 KB | 21ms | 258ms |
 | [The Complete Works of Shakespeare](https://ocw.mit.edu/ans7870/6/6.006/s08/lecturenotes/files/t8.shakespeare.txt) | ~ 5.5 MB | ~ 3.2 MB | 0.6s | 17s |
 
-### Compressed File Format
+### Compressed File Format (tentative)
 
 Introduces the `.et` file format, identified by the magic number `e7 c0 de`.
 
