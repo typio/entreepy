@@ -1,4 +1,5 @@
 # entreepy
+[![Actions Status](https://github.com/typio/entreepy/workflows/release/badge.svg)](https://github.com/typio/entreepy/actions)
 
 > ⚡ Huffman compression
 
