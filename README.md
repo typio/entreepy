@@ -4,7 +4,7 @@ entreepy<br/>
 
 > ⚡ Huffman compression
 
-The name is because binary trees + entropy coding.
+The name is from entropy coding + binary trees.
 
 ### Usage
 
