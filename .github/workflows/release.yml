@@ -33,25 +33,25 @@ jobs:
     strategy:
       matrix:
         include:
-            - name: linux-x86_64
-              target: x86_64-linux
-              strip: strip=true
-              optimize: optimize=ReleaseSafe
+          - name: linux-x86_64
+            target: x86_64-linux
+            strip: strip=true
+            optimize: optimize=ReleaseSafe
 
-            - name: windows-x86_64
-              target: x86_64-windows
-              strip: strip=true
-              optimize: optimize=ReleaseSafe
+          - name: windows-x86_64
+            target: x86_64-windows
+            strip: strip=true
+            optimize: optimize=ReleaseSafe
 
-            - name: macos-aarch64
-              target: aarch64-macos
-              strip: strip=true
-              optimize: optimize=ReleaseSafe
+          - name: macos-aarch64
+            target: aarch64-macos
+            strip: strip=true
+            optimize: optimize=ReleaseSafe
 
-            - name: macos-x86
-              target: x86_64-macos
-              strip: strip=true
-              optimize: optimize=ReleaseSafe
+          - name: macos-x86
+            target: x86_64-macos
+            strip: strip=true
+            optimize: optimize=ReleaseSafe
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -81,4 +81,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v0.5.0 -t "0.5.0" -n "This is the first release right here :zap:" entreepy/entreepy*
+          gh release create v0.5.1 -t "0.5.1" entreepy/entreepy*

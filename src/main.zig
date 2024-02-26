@@ -9,7 +9,7 @@ const fs = std.fs;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
-const Mode = enum(u2) {
+const Mode = enum {
     None,
     Compress,
     Decompress,
@@ -40,10 +40,10 @@ fn read_text_file(allocator: Allocator, filepath: []const u8) ![]const u8 {
 }
 
 fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
-    var options = Options{ .print = false, .debug = false, .dry = false, .mode = Mode.None, .file_in_path = undefined, .file_out_path = try allocator.alloc(u8, 0) };
+    var options = Options{ .print = false, .debug = false, .dry = false, .mode = Mode.None, .file_in_path = undefined, .file_out_path = undefined };
 
     const help_text =
-        \\File compression tool using huffman compression
+        \\Entreepy - Text compression tool
         \\
         \\Usage: entreepy [options] [command] [file] [command options]
         \\
@@ -65,6 +65,7 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
         \\    entreepy -ptd d text.txt.et -o decoded_text.txt
         \\
     ;
+
     var args = try std.process.argsWithAllocator(allocator);
     // skip exe path
     _ = args.skip();
@@ -75,93 +76,74 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
     };
 
     if (mem.eql(u8, arg1, "-h") or mem.eql(u8, arg1, "--help")) {
-        try std_out.writeAll(help_text);
+        std_out.writeAll(help_text) catch {};
         return options;
     }
 
-    var arg = arg1;
-    while (true) {
-        // parse initial options
-        if (arg[0] == '-') {
-            for (arg[1..]) |c| {
-                switch (c) {
-                    'p' => options.print = true,
-                    'd' => options.debug = true,
-                    't' => options.dry = true,
+    const CLIParsingState = enum { reading_normal, reading_out_path, reading_in_path };
+
+    var cli_parsing_state: CLIParsingState = .reading_normal;
+
+    while (args.next()) |arg| {
+        switch (cli_parsing_state) {
+            .reading_normal => {
+                switch (arg[0]) {
                     '-' => {
-                        if (mem.eql(u8, arg[2..], "print")) {
-                            options.print = true;
-                            break;
-                        } else if (mem.eql(u8, arg[2..], "debug")) {
-                            options.debug = true;
-                            break;
-                        } else if (mem.eql(u8, arg[2..], "test")) {
-                            options.dry = true;
-                            break;
-                        } else {
-                            log.err("invalid option: {s}\n", .{arg});
-                            return error.InvalidOption;
+                        // parse initial options
+                        for (arg[1..]) |c| {
+                            switch (c) {
+                                'p' => options.print = true,
+                                'd' => options.debug = true,
+                                't' => options.dry = true,
+                                'o' => cli_parsing_state = .reading_out_path,
+                                '-' => {
+                                    if (mem.eql(u8, arg[2..], "print")) {
+                                        options.print = true;
+                                        break;
+                                    } else if (mem.eql(u8, arg[2..], "debug")) {
+                                        options.debug = true;
+                                        break;
+                                    } else if (mem.eql(u8, arg[2..], "test")) {
+                                        options.dry = true;
+                                        break;
+                                    } else if (mem.eql(u8, arg[2..], "output")) {
+                                        cli_parsing_state = .reading_out_path;
+                                        break;
+                                    } else {
+                                        log.err("invalid option: {s}\n", .{arg});
+                                        return error.InvalidOption;
+                                    }
+                                },
+                                else => {
+                                    log.err("invalid option: {s}\n", .{arg});
+                                    return error.InvalidOption;
+                                },
+                            }
                         }
                     },
+                    'c', 'd' => {
+                        // parse commands
+                        if (arg[0] == 'c') {
+                            options.mode = Mode.Compress;
+                        } else {
+                            options.mode = Mode.Decompress;
+                        }
+                        cli_parsing_state = .reading_in_path;
+                    },
                     else => {
-                        log.err("invalid option: {s}\n", .{arg});
-                        return error.InvalidOption;
+                        log.err("invalid command: {s}\n", .{arg});
+                        return error.InvalidCommand;
                     },
                 }
-            }
-            arg = args.next() orelse break;
-            continue;
-        }
-
-        // parse commands
-        if (arg[0] == 'c' or arg[0] == 'd') {
-            if (arg[0] == 'c') {
-                options.mode = Mode.Compress;
-            } else if (arg[0] == 'd') {
-                options.mode = Mode.Decompress;
-            }
-            options.file_in_path = args.next() orelse return error.NoInputFile;
-            arg = args.next() orelse break;
-            if (arg[0] == '-') {
-                for (arg[1..]) |c| {
-                    switch (c) {
-                        'o' => {
-                            // allocate it unnecessarily so we can free it unconditionally
-                            options.file_out_path =
-                                try allocator.dupe(u8, args.next() orelse {
-                                log.err("missing file_in_name after -o\n", .{});
-                                return error.InvalidCommandArgument;
-                            });
-                            break;
-                        },
-                        '-' => {
-                            if (mem.eql(u8, arg[2..], "output")) {
-                                options.file_out_path = try allocator.dupe(u8, args.next() orelse {
-                                    log.err("missing file_in_name after --output\n", .{});
-                                    return error.InvalidCommandArgument;
-                                });
-                            } else {
-                                log.err("invalid option: {s}\n", .{arg});
-                                return error.InvalidOption;
-                            }
-                        },
-                        else => {
-                            log.err("invalid option: {c}\n", .{c});
-                            return error.InvalidOption;
-                        },
-                    }
-                } else {
-                    log.err("invalid option: {s}\n", .{arg});
-                    return error.InvalidOption;
-                }
-            } else {
-                log.err("invalid command: {s}\n", .{arg});
-                return error.InvalidCommand;
-            }
-
-            arg = args.next() orelse {
-                break;
-            };
+            },
+            .reading_in_path => {
+                options.file_in_path = arg;
+                cli_parsing_state = .reading_normal;
+            },
+            .reading_out_path => {
+                options.file_out_path = try allocator.dupe(u8, arg);
+                cli_parsing_state = .reading_normal;
+            },
         }
     }
 
@@ -170,13 +152,12 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
             options.file_out_path =
                 try mem.concat(allocator, u8, &[2][]const u8{ options.file_in_path, ".et" });
         } else {
-            // NOTE: hard to read but it just adds "decoded_" to the front of the file name and
-            // removes the ".et" extension if its there
-            var file_in_dir = fs.path.dirname(options.file_in_path) orelse "";
+            // removes the ".et" extension if it's there and adds "decoded_" to the front of the file name
+            const file_in_dir = fs.path.dirname(options.file_in_path) orelse "";
             var new_file_name = fs.path.basename(options.file_in_path);
             if (mem.eql(u8, new_file_name[new_file_name.len - 3 ..], ".et"))
                 new_file_name = new_file_name[0 .. new_file_name.len - 3];
-            var decoded_file_name = try mem.concat(allocator, u8, &[2][]const u8{ "decoded_", new_file_name });
+            const decoded_file_name = try mem.concat(allocator, u8, &[2][]const u8{ "decoded_", new_file_name });
             defer allocator.free(decoded_file_name);
             options.file_out_path =
                 try fs.path.join(allocator, &[_][]const u8{ file_in_dir, decoded_file_name });
@@ -197,7 +178,7 @@ pub fn main() !void {
     defer allocator.free(options.file_out_path);
     if (options.mode == Mode.None) return;
 
-    var text_in = try read_text_file(allocator, options.file_in_path);
+    const text_in = try read_text_file(allocator, options.file_in_path);
     defer allocator.free(text_in);
 
     // Reading seems to add an extra \n at end... not sure actually,
@@ -215,9 +196,9 @@ pub fn main() !void {
     }
 
     if (options.mode == Mode.Compress) {
-        try encode(allocator, text_in, out_writer, std_out, .{ .write_output = !options.dry, .print_output = options.print, .debug = options.debug });
+        _ = try encode(allocator, text_in, out_writer, std_out, .{ .write_output = !options.dry, .print_output = options.print, .debug = options.debug });
     } else {
-        try decode(allocator, text_in, out_writer, std_out, .{ .write_output = !options.dry, .print_output = options.print, .debug = options.debug });
+        _ = try decode(allocator, text_in, out_writer, std_out, .{ .write_output = !options.dry, .print_output = options.print, .debug = options.debug });
     }
 
     if (!options.dry) out_file.close();

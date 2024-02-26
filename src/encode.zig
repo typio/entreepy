@@ -20,7 +20,7 @@ const Node = struct {
     visited: bool,
 };
 
-pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Writer, std_out: std.fs.File, flags: EncodeFlags) !void {
+pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_out: std.fs.File, flags: EncodeFlags) !usize {
     const start_time = std.time.microTimestamp();
     defer if (flags.debug) std_out.writer().print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() -
         start_time}) catch {};
@@ -49,7 +49,7 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Wr
             // occurences is definitionally sorted in ASCII alphabetical order
             // so ties (1+ c's with same o) with be resolved alphabetically
             if (o == min_value) {
-                sorted_letter_book[book_index] = @intCast(u8, c);
+                sorted_letter_book[book_index] = @intCast(c);
                 if (book_index < 255) book_index += 1;
             }
         }
@@ -90,7 +90,7 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Wr
                 lowest_nodes[i] = try leaf_queue.dequeue();
             } else if (leaf_queue.count == 0) {
                 lowest_nodes[i] = try sapling_queue.dequeue();
-            } else if (leaf_queue.get_front().weight <= sapling_queue.get_front().weight) {
+            } else if (leaf_queue.peek().?.weight <= sapling_queue.peek().?.weight) {
                 lowest_nodes[i] = try leaf_queue.dequeue();
             } else {
                 lowest_nodes[i] = try sapling_queue.dequeue();
@@ -105,7 +105,7 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Wr
             .right = lowest_nodes[1],
             .visited = false,
         };
-        var internal_parent = &nodes[nodes_index].?;
+        const internal_parent = &nodes[nodes_index].?;
         nodes_index += 1;
 
         lowest_nodes[0].parent = internal_parent;
@@ -178,7 +178,7 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Wr
             var j: u8 = traverser.path.length;
             while (j > 0) : (j -= 1) {
                 if (flags.debug) try std_out.writer().print("{b}", .{traverser.path.data >>
-                    @truncate(u4, j - 1) & 1});
+                    @as(u4, @truncate(j - 1)) & 1});
             }
             if (flags.debug) try std_out.writer().print("\n", .{});
             dictionary[traverser.node.symbol orelse unreachable] = traverser.path;
@@ -190,7 +190,7 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Wr
     var out_buffer = try allocator.alloc(u8, max_header_length + text.len);
     defer allocator.free(out_buffer);
     var out_buffer_out = std.io.fixedBufferStream(out_buffer);
-    var bit_stream_writer = std.io.bitWriter(.Big, out_buffer_out.writer());
+    var bit_stream_writer = std.io.bitWriter(.big, out_buffer_out.writer());
 
     var bits_written: usize = 0;
 
@@ -208,9 +208,8 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Wr
     bits_written += 8;
 
     // write body length
-    // WARN: really bad hack around big files not decoding
-    // all the way (not reliable at all) gotta find underlying issue
-    try bit_stream_writer.writeBits(@truncate(u32, text.len + text.len / 100), 32);
+    try bit_stream_writer.writeBits(text.len, 32);
+    std.debug.print("text.len {}", .{text.len});
     bits_written += 32;
 
     // write dictionary
@@ -224,27 +223,28 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: std.fs.File.Wr
             bits_written += 8;
             var j: usize = code.length;
             while (j > 0) : (j -= 1) {
-                try bit_stream_writer.writeBits((code.data >> @truncate(u4, j - 1)) & 1, 1);
+                try bit_stream_writer.writeBits((code.data >> @as(u4, @truncate(j - 1))) & 1, 1);
                 bits_written += 1;
             }
         }
     }
     try bit_stream_writer.flushBits();
-    // bits_written = bits_written + (8 - bits_written % 10);
+    bits_written = if (bits_written % 8 != 0) (bits_written / 8 + 1) * 8 else bits_written;
 
     // write compressed bits
     for (text) |char| {
-        var code = dictionary[char];
+        const code = dictionary[char];
         var j: usize = code.length;
         while (j > 0) : (j -= 1) {
-            try bit_stream_writer.writeBits((code.data >> @truncate(u4, j - 1)) & 1, 1);
+            try bit_stream_writer.writeBits((code.data >> @as(u4, @truncate(j - 1))) & 1, 1);
             bits_written += 1;
         }
     }
 
     try bit_stream_writer.flushBits();
-    // bits_written = bits_written + (8 - bits_written % 10);
-    if (flags.write_output) try out_writer.writeAll(out_buffer[0 .. bits_written / 8 + 3]);
+    bits_written = if (bits_written % 8 != 0) (bits_written / 8 + 1) * 8 else bits_written;
+    if (flags.write_output) try out_writer.writeAll(out_buffer[0 .. bits_written / 8]);
     if (flags.debug) try std_out.writer().print("\nbits in output: {d}\n", .{bits_written});
-    //try out_writer.writeAll(out_buffer[0..]);
+
+    return bits_written / 8;
 }

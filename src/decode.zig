@@ -2,15 +2,16 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
-pub const DecodeFlags = packed struct {
+pub const DecodeFlags = struct {
     write_output: bool = false,
     print_output: bool = false,
     debug: bool = false,
-    _padding: u30 = 0,
 };
 
-pub fn decode(allocator: Allocator, compressed_text: []const u8, out_writer: std.fs.File.Writer,
-std_out: std.fs.File, flags: DecodeFlags) !void {
+// TODO: Add checks for to error if it isnt in valid .et file format (min length)
+
+pub fn decode(allocator: Allocator, compressed_text: []const u8, out_writer: anytype, std_out: std.fs.File, flags: DecodeFlags) !usize {
+    var bytes_written: u32 = 0;
     const start_time = std.time.microTimestamp();
     defer if (flags.debug) std_out.writer().print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() -
         start_time}) catch {};
@@ -19,7 +20,9 @@ std_out: std.fs.File, flags: DecodeFlags) !void {
     var reading_dict_code_len: bool = false;
     var reading_dict_code: bool = false;
 
-    var decode_dictionary_length: usize = compressed_text[3] + 1;
+    const decode_dictionary_length: u8 = compressed_text[3] + 1;
+
+    std.debug.print("decode_dictionary_length: {}\n", .{decode_dictionary_length});
 
     var decode_body_length: u32 = compressed_text[4];
     decode_body_length <<= 8;
@@ -28,6 +31,8 @@ std_out: std.fs.File, flags: DecodeFlags) !void {
     decode_body_length |= compressed_text[6];
     decode_body_length <<= 8;
     decode_body_length |= compressed_text[7];
+
+    std.debug.print("decode body length: {}\n", .{decode_body_length});
 
     var longest_code: u8 = 0;
     var shortest_code: usize = std.math.maxInt(usize);
@@ -56,12 +61,12 @@ std_out: std.fs.File, flags: DecodeFlags) !void {
                 while (i <= 7) {
                     if (pos > 7) break :read;
                     build_bits <<= 1;
-                    build_bits |= (byte >> @truncate(u3, 7 - pos)) & 1;
+                    build_bits |= (byte >> @as(u3, @truncate(7 - pos))) & 1;
                     pos += 1;
                     i += 1;
                 }
 
-                current_letter = @truncate(u8, build_bits);
+                current_letter = @as(u8, @truncate(build_bits));
 
                 reading_dict_letter = false;
                 reading_dict_code_len = true;
@@ -74,12 +79,12 @@ std_out: std.fs.File, flags: DecodeFlags) !void {
                 while (i <= 7) {
                     if (pos > 7) break :read;
                     build_bits <<= 1;
-                    build_bits |= (byte >> @truncate(u3, 7 - pos)) & 1;
+                    build_bits |= (byte >> @as(u3, @truncate(7 - pos))) & 1;
                     pos += 1;
                     i += 1;
                 }
 
-                current_code_length = @truncate(u8, build_bits);
+                current_code_length = @as(u8, @truncate(build_bits));
 
                 if (current_code_length > longest_code) longest_code = current_code_length;
                 if (current_code_length < shortest_code) shortest_code = current_code_length;
@@ -95,7 +100,7 @@ std_out: std.fs.File, flags: DecodeFlags) !void {
                 while (i < current_code_length) {
                     if (pos > 7) break :read;
                     build_bits <<= 1;
-                    build_bits |= (byte >> @truncate(u3, 7 - pos)) & 1;
+                    build_bits |= (byte >> @as(u3, @truncate(7 - pos))) & 1;
 
                     pos += 1;
                     i += 1;
@@ -140,7 +145,7 @@ std_out: std.fs.File, flags: DecodeFlags) !void {
         decode_text: while (window_len >= longest_code) {
             // loop through all possible code lengths, checking start of window for match
             checking_code_len = shortest_code;
-            while (checking_code_len <= longest_code and window_len >= longest_code) {
+            while (window_len >= checking_code_len) {
                 if (decoded_letters_read >= decode_body_length or
                     window_len < checking_code_len)
                 {
@@ -148,21 +153,24 @@ std_out: std.fs.File, flags: DecodeFlags) !void {
                 }
 
                 testing_code = window &
-                    ((@as(u32, 0b1) << @truncate(u5, checking_code_len)) - 1) << @truncate(u5, window_len - checking_code_len);
+                    ((@as(u32, 0b1) << @as(u5, @truncate(checking_code_len))) - 1) << @as(u5, @truncate(window_len - checking_code_len));
 
-                testing_code >>= @truncate(u6, window_len - checking_code_len);
+                testing_code >>= @as(u6, @truncate(window_len - checking_code_len));
 
                 if (decode_table.get(testing_code)) |entry| {
                     if (entry[checking_code_len - 1] > 0) {
-                        var c = entry[checking_code_len - 1];
+                        const c = entry[checking_code_len - 1];
 
-                        if (flags.write_output) try out_writer.writeByte(c);
+                        if (flags.write_output) {
+                            try out_writer.writeByte(c);
+                            bytes_written += 1;
+                        }
                         if (flags.print_output) try std_out.writer().print("{c}", .{c});
 
                         decoded_letters_read += 1;
 
                         window = window & ((@as(u32, 0b1) <<
-                            @truncate(u5, window_len - checking_code_len)) - 1);
+                            @as(u5, @truncate(window_len - checking_code_len))) - 1);
                         window_len -= checking_code_len;
                         checking_code_len = shortest_code;
                     }
@@ -171,4 +179,5 @@ std_out: std.fs.File, flags: DecodeFlags) !void {
             }
         }
     }
+    return bytes_written;
 }
