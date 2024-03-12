@@ -40,7 +40,7 @@ fn read_text_file(allocator: Allocator, filepath: []const u8) ![]const u8 {
 }
 
 fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
-    var options = Options{ .print = false, .debug = false, .dry = false, .mode = Mode.None, .file_in_path = undefined, .file_out_path = undefined };
+    var options = Options{ .print = false, .debug = false, .dry = false, .mode = .None, .file_in_path = undefined, .file_out_path = undefined };
 
     const help_text =
         \\Entreepy - Text compression tool
@@ -67,37 +67,36 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
     ;
 
     var args = try std.process.argsWithAllocator(allocator);
-    // skip exe path
-    _ = args.skip();
-
-    const arg1 = args.next() orelse {
-        std_out.writeAll(help_text) catch {};
-        return options;
-    };
-
-    if (mem.eql(u8, arg1, "-h") or mem.eql(u8, arg1, "--help")) {
-        std_out.writeAll(help_text) catch {};
-        return options;
-    }
+    _ = args.skip(); // skip exe path
+    var hasUserArgs = false;
 
     const CLIParsingState = enum { reading_normal, reading_out_path, reading_in_path };
 
     var cli_parsing_state: CLIParsingState = .reading_normal;
 
     while (args.next()) |arg| {
+        hasUserArgs = true;
         switch (cli_parsing_state) {
             .reading_normal => {
                 switch (arg[0]) {
                     '-' => {
-                        // parse initial options
                         for (arg[1..]) |c| {
                             switch (c) {
+                                'h' => {
+                                    std_out.writeAll(help_text) catch {};
+                                    options.mode = .None;
+                                    return options;
+                                },
                                 'p' => options.print = true,
                                 'd' => options.debug = true,
                                 't' => options.dry = true,
                                 'o' => cli_parsing_state = .reading_out_path,
                                 '-' => {
-                                    if (mem.eql(u8, arg[2..], "print")) {
+                                    if (mem.eql(u8, arg[2..], "help")) {
+                                        std_out.writeAll(help_text) catch {};
+                                        options.mode = .None;
+                                        return options;
+                                    } else if (mem.eql(u8, arg[2..], "print")) {
                                         options.print = true;
                                         break;
                                     } else if (mem.eql(u8, arg[2..], "debug")) {
@@ -122,11 +121,10 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
                         }
                     },
                     'c', 'd' => {
-                        // parse commands
                         if (arg[0] == 'c') {
-                            options.mode = Mode.Compress;
+                            options.mode = .Compress;
                         } else {
-                            options.mode = Mode.Decompress;
+                            options.mode = .Decompress;
                         }
                         cli_parsing_state = .reading_in_path;
                     },
@@ -147,8 +145,14 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
         }
     }
 
+    if (!hasUserArgs) {
+        std_out.writeAll(help_text) catch {};
+        options.mode = .None;
+        return options;
+    }
+
     if (options.file_out_path.len == 0) {
-        if (options.mode == Mode.Compress) {
+        if (options.mode == .Compress) {
             options.file_out_path =
                 try mem.concat(allocator, u8, &[2][]const u8{ options.file_in_path, ".et" });
         } else {
@@ -176,14 +180,10 @@ pub fn main() !void {
 
     const options = try run_cli(allocator, std_out);
     defer allocator.free(options.file_out_path);
-    if (options.mode == Mode.None) return;
+    if (options.mode == .None) return;
 
     const text_in = try read_text_file(allocator, options.file_in_path);
     defer allocator.free(text_in);
-
-    // Reading seems to add an extra \n at end... not sure actually,
-    // also this code has the issue of freeing the wrong amount
-    // if (text_in.len > 0) text_in = text_in[0 .. text_in.len - 1];
 
     var out_file: std.fs.File = undefined;
     var out_writer: std.fs.File.Writer = undefined;
@@ -195,10 +195,12 @@ pub fn main() !void {
         out_writer = out_file.writer();
     }
 
-    if (options.mode == Mode.Compress) {
+    // TODO: Add checks for to error if it isnt in valid .et file format file format version, min length, magic number,
+
+    if (options.mode == .Compress) {
         _ = try encode(allocator, text_in, out_writer, std_out, .{ .write_output = !options.dry, .print_output = options.print, .debug = options.debug });
     } else {
-        _ = try decode(allocator, text_in, out_writer, std_out, .{ .write_output = !options.dry, .print_output = options.print, .debug = options.debug });
+        _ = try decode(allocator, text_in[4..], out_writer, std_out, .{ .write_output = !options.dry, .print_output = options.print, .debug = options.debug });
     }
 
     if (!options.dry) out_file.close();

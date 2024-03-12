@@ -36,20 +36,20 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
     // alphabetically, 0 occurence ascii chars at the end
     var sorted_letter_book = [_]u8{0} ** 256;
 
-    // my naive custom sort, <256 passes, ~100 microseconds
+    // simple custom sort, <256 passes, ~100 microseconds
     var book_index: u8 = 0;
     var min_value: usize = 1;
     var next_min_value: usize = 0;
     while (next_min_value != std.math.maxInt(usize)) {
         next_min_value = std.math.maxInt(usize);
-        for (occurences_book, 0..) |o, c| {
-            if (o < next_min_value and o > min_value) {
-                next_min_value = o;
+        for (occurences_book, 0..) |occurences, char_code| {
+            if (occurences < next_min_value and occurences > min_value) {
+                next_min_value = occurences;
             }
             // occurences is definitionally sorted in ASCII alphabetical order
-            // so ties (1+ c's with same o) with be resolved alphabetically
-            if (o == min_value) {
-                sorted_letter_book[book_index] = @intCast(c);
+            // so ties (different char_codes with same occurences) with be resolved alphabetically
+            if (occurences == min_value) {
+                sorted_letter_book[book_index] = @intCast(char_code);
                 if (book_index < 255) book_index += 1;
             }
         }
@@ -174,14 +174,43 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
         }
 
         if (traverser.node.right == null and traverser.node.left == null) {
-            if (flags.debug) try std_out.writer().print("{c} - ", .{traverser.node.symbol orelse 0});
+            if (flags.debug) try std_out.writer().print("{c} {} - ", .{ traverser.node.symbol orelse 0, traverser.node.symbol orelse 0 });
             var j: u8 = traverser.path.length;
             while (j > 0) : (j -= 1) {
                 if (flags.debug) try std_out.writer().print("{b}", .{traverser.path.data >>
-                    @as(u4, @truncate(j - 1)) & 1});
+                    @as(u5, @truncate(j - 1)) & 1});
             }
             if (flags.debug) try std_out.writer().print("\n", .{});
             dictionary[traverser.node.symbol orelse unreachable] = traverser.path;
+        }
+    }
+
+    // debug check that there are no colliding prefixes
+    if (flags.debug) {
+        for (dictionary, 0..) |code_1, i| {
+            for (dictionary, 0..) |code_2, j| {
+                if (code_1.length == 0 or code_2.length == 0 or i == j) continue;
+
+                var isPrefix = true;
+                const shorter = @min(code_1.length, code_2.length);
+                var k: usize = 0;
+
+                while (k <= shorter) : (k += 1) {
+                    const code_1_bit = (code_1.data >> @as(u5, @truncate(code_1.length - k))) & 1;
+                    const code_2_bit = (code_2.data >> @as(u5, @truncate(code_2.length - k))) & 1;
+
+                    if (code_1_bit != code_2_bit) {
+                        isPrefix = false;
+                        break;
+                    }
+                }
+
+                if (isPrefix) {
+                    const l_i = @as(u8, @truncate(i));
+                    const l_j = @as(u8, @truncate(j));
+                    try std_out.writer().print("Found colliding prefix codes for {} {c} and {} {c}", .{ l_i, l_i, l_j, l_j });
+                }
+            }
         }
     }
 
@@ -198,6 +227,10 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
     try bit_stream_writer.writeBits(@as(u24, 0xe7c0de), 24);
     bits_written += 24;
 
+    // write format version
+    try bit_stream_writer.writeBits(@as(u8, 0x01), 8);
+    bits_written += 8;
+
     // write dictionary length
     var dictionary_length: usize = 0; // dictionary length - 1
     for (dictionary) |code| {
@@ -209,7 +242,6 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
 
     // write body length
     try bit_stream_writer.writeBits(text.len, 32);
-    std.debug.print("text.len {}", .{text.len});
     bits_written += 32;
 
     // write dictionary
@@ -223,7 +255,7 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
             bits_written += 8;
             var j: usize = code.length;
             while (j > 0) : (j -= 1) {
-                try bit_stream_writer.writeBits((code.data >> @as(u4, @truncate(j - 1))) & 1, 1);
+                try bit_stream_writer.writeBits((code.data >> @as(u5, @truncate(j - 1))) & 1, 1);
                 bits_written += 1;
             }
         }
@@ -236,7 +268,7 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
         const code = dictionary[char];
         var j: usize = code.length;
         while (j > 0) : (j -= 1) {
-            try bit_stream_writer.writeBits((code.data >> @as(u4, @truncate(j - 1))) & 1, 1);
+            try bit_stream_writer.writeBits((code.data >> @as(u5, @truncate(j - 1))) & 1, 1);
             bits_written += 1;
         }
     }

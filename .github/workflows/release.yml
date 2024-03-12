@@ -35,23 +35,19 @@ jobs:
         include:
           - name: linux-x86_64
             target: x86_64-linux
-            strip: strip=true
-            optimize: optimize=ReleaseSafe
+            optimize: optimize=ReleaseFast
 
           - name: windows-x86_64
             target: x86_64-windows
-            strip: strip=true
-            optimize: optimize=ReleaseSafe
+            optimize: optimize=ReleaseFast
 
           - name: macos-aarch64
             target: aarch64-macos
-            strip: strip=true
-            optimize: optimize=ReleaseSafe
+            optimize: optimize=ReleaseFast
 
           - name: macos-x86
             target: x86_64-macos
-            strip: strip=true
-            optimize: optimize=ReleaseSafe
+            optimize: optimize=ReleaseFast
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -61,9 +57,9 @@ jobs:
         with:
           version: master
 
-      - name: zig build -D${{ matrix.strip }} -D${{ matrix.optimize }} -Dtarget=${{ matrix.target }}
+      - name: zig build -D${{ matrix.optimize }} -Dtarget=${{ matrix.target }}
         run: |
-          zig build -D${{ matrix.strip }} -D${{ matrix.optimize }} -Dtarget=${{ matrix.target }}
+          zig build -D${{ matrix.optimize }} -Dtarget=${{ matrix.target }}
 
       - uses: actions/upload-artifact@v3
         with:
@@ -81,4 +77,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v0.5.1 -t "0.5.1" entreepy/entreepy*
+          gh release create v1.0.0 -t "1.0.0" entreepy/entreepy*

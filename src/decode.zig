@@ -8,8 +8,6 @@ pub const DecodeFlags = struct {
     debug: bool = false,
 };
 
-// TODO: Add checks for to error if it isnt in valid .et file format (min length)
-
 pub fn decode(allocator: Allocator, compressed_text: []const u8, out_writer: anytype, std_out: std.fs.File, flags: DecodeFlags) !usize {
     var bytes_written: u32 = 0;
     const start_time = std.time.microTimestamp();
@@ -20,19 +18,15 @@ pub fn decode(allocator: Allocator, compressed_text: []const u8, out_writer: any
     var reading_dict_code_len: bool = false;
     var reading_dict_code: bool = false;
 
-    const decode_dictionary_length: u8 = compressed_text[3] + 1;
+    const decode_dictionary_length: u8 = compressed_text[0] + 1;
 
-    std.debug.print("decode_dictionary_length: {}\n", .{decode_dictionary_length});
-
-    var decode_body_length: u32 = compressed_text[4];
+    var decode_body_length: u32 = compressed_text[1];
     decode_body_length <<= 8;
-    decode_body_length |= compressed_text[5];
+    decode_body_length |= compressed_text[2];
     decode_body_length <<= 8;
-    decode_body_length |= compressed_text[6];
+    decode_body_length |= compressed_text[3];
     decode_body_length <<= 8;
-    decode_body_length |= compressed_text[7];
-
-    std.debug.print("decode body length: {}\n", .{decode_body_length});
+    decode_body_length |= compressed_text[4];
 
     var longest_code: u8 = 0;
     var shortest_code: usize = std.math.maxInt(usize);
@@ -53,7 +47,7 @@ pub fn decode(allocator: Allocator, compressed_text: []const u8, out_writer: any
     var build_bits: usize = 0b0;
     var i: usize = 0; // bit pos in current read
     var letters_read: u8 = 0;
-    for (compressed_text[8..]) |byte| {
+    for (compressed_text[5..]) |byte| {
         pos = 0;
 
         read: while (true) {
@@ -136,7 +130,7 @@ pub fn decode(allocator: Allocator, compressed_text: []const u8, out_writer: any
     var testing_code: usize = 0;
     var decoded_letters_read: usize = 0;
 
-    for (compressed_text[8 + global_pos ..]) |byte| {
+    for (compressed_text[5 + global_pos ..]) |byte| {
         window <<= 8;
         window |= byte;
         window_len += 8;

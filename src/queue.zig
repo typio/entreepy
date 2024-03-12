@@ -6,7 +6,6 @@ const QueueError = error{
     QueueEmpty,
 };
 
-// basic circular buffer queue
 pub fn Queue(comptime T: type, comptime length: usize) type {
     return struct {
         count: usize = 0,

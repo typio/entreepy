@@ -2,20 +2,22 @@ entreepy<br/>
 [![Actions Status](https://github.com/typio/entreepy/workflows/release/badge.svg)](https://github.com/typio/entreepy/actions)
 ====
 
-> ⚡ Fast huffman coding text compression
+> ⚡ Fast text compression tool
 
-The name is from entropy coding + binary trees.
+The name is entropy coding + binary trees.
 
 ### Usage
 
 ```
-$ entreepy [options] [command] [file] [command options]
+Entreepy - Text compression tool
+
+Usage: entreepy [options] [command] [file] [command options]
 
 Options:
     -h, --help     show help
     -p, --print    print decompressed text to stdout
     -t, --test     test/dry run, does not write to file
-    -d, --debug    print huffman code dictionary and performance times
+    -d, --debug    print huffman code dictionary and performance times to stdout
 
 Commands:
     c    compress a file
@@ -26,10 +28,10 @@ Command Options:
 
 Examples:
     entreepy -d c text.txt -o text.txt.et
-    entreepy -ptd d text.txt.et
+    entreepy -ptd d text.txt.et -o decoded_text.txt
 ```
 
-Input file must be < 1 terabyte. I recommend keeping an uncompressed backup or testing the program's decompression before deleting the original, the program hasn't been robustly tested. Be sure to use the same version of the program to decompress as compress.
+Input file must be < 1 terabyte. Be sure to use the same version of the program to decompress as compress.
 
 ### Performance
 
@@ -41,12 +43,14 @@ I use a decode map which is keyed by the integer value of the code and stores a 
 
 By utilizing this decode map, decoding can be performed much more quickly than by traversing a binary tree.
 
-#### Performance on MacBook Air M2, 8 GB RAM - v0.5.0
+#### Performance on MacBook Air M2, 8 GB RAM - v1.0.0
 | File | Original File Size | Compressed Size | Compression Time | Decompression Time |
 | ---- | :----------------: | :-------------: | :--------------: | :----------------: |
-| [Macbeth, Act V, Scene V](https://github.com/typio/entreepy/blob/main/res/nice.shakespeare.txt)   | 477 bytes | 374 bytes | 240μs | 950μs |
-| [A Midsummer Night's Dream](https://github.com/typio/entreepy/blob/main/res/a_midsummer_nights_dream.txt) | ~ 115 KB | ~ 66 KB | 2.2ms | 150ms |
-| [The Complete Works of Shakespeare](https://ocw.mit.edu/ans7870/6/6.006/s08/lecturenotes/files/t8.shakespeare.txt) | ~ 5.5 MB | ~ 3.2 MB | 0.1s | 7s |
+| [Macbeth, Act V, Scene V](https://github.com/typio/entreepy/blob/main/res/nice.shakespeare.txt)   | 477 bytes | 374 bytes | 600μs | 3.2ms |
+| [A Midsummer Night's Dream](https://github.com/typio/entreepy/blob/main/res/a_midsummer_nights_dream.txt) | ~ 112 KB | ~ 68 KB | 6.7ms | 262ms |
+| [The Complete Works of Shakespeare](https://ocw.mit.edu/ans7870/6/6.006/s08/lecturenotes/files/t8.shakespeare.txt) | ~ 5.2 MB | ~ 3.0 MB | 111ms | 11.8s |
+
+Next I'll add block based parallel decoding. After that I'm interested in exploring additional compression techniques; to support non-text file formats.
 
 ### Compressed File Format
 
@@ -54,7 +58,8 @@ Uses the `.et` file format, identified by the magic number `e7 c0 de`.
 
 ```bf
 | magic number -> 3 bytes |
-| (length of dictionary - 1) -> 1 byte |
+| file format version -> 1 byte |
+| length of dictionary - 1 -> 1 byte |
 | length of body -> 4 bytes |
 
 for n symbols
