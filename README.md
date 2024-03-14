@@ -6,8 +6,6 @@ entreepy<br/>
 
 The name is entropy coding + binary trees.
 
-It now has a fancy progress bar!
-
 ### Usage
 
 ![output](https://github.com/typio/entreepy/assets/26017543/0d2d3034-cb0f-4886-b712-f57435dbe429)
