@@ -151,6 +151,7 @@ fn run_cli(allocator: Allocator, std_out: std.fs.File) !Options {
         return options;
     }
 
+    // FIX: Generating default filename causes segfault on linux
     if (options.file_out_path.len == 0) {
         if (options.mode == .Compress) {
             options.file_out_path =

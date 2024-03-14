@@ -1,6 +1,8 @@
 const std = @import("std");
 
 const Queue = @import("queue.zig").Queue;
+const print_progress = @import("progress_bar.zig").print_progress;
+const format_file_size = @import("utils.zig").format_file_size;
 
 const Allocator = std.mem.Allocator;
 
@@ -22,8 +24,20 @@ const Node = struct {
 
 pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_out: std.fs.File, flags: EncodeFlags) !usize {
     const start_time = std.time.microTimestamp();
-    defer if (flags.debug) std_out.writer().print("\ntime taken: {d}μs\n", .{std.time.microTimestamp() -
+    defer if (flags.debug) std_out.writer().print("time taken: {d}μs\n", .{std.time.microTimestamp() -
         start_time}) catch {};
+
+    var encoding_progress: usize = 0;
+    var encoding_state_msg: []const u8 = "Encoding file...";
+
+    var print_progress_thread: ?std.Thread = null;
+    // TODO: Make progress bar work with debug flag
+    if (!flags.print_output and !flags.debug) {
+        print_progress_thread = try std.Thread.spawn(.{}, print_progress, .{ 0, &encoding_progress, &encoding_state_msg });
+    }
+
+    encoding_progress = 10;
+    encoding_state_msg = "Counting characters...";
 
     // array where index is the ascii char and value is number of occurences
     var occurences_book = [_]usize{0} ** 256;
@@ -31,6 +45,9 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
     for (text) |c| {
         occurences_book[c] += 1;
     }
+
+    encoding_progress = 20;
+    encoding_state_msg = "Sorting characters...";
 
     // an array of ascii chars sorted from least to most frequent then
     // alphabetically, 0 occurence ascii chars at the end
@@ -55,6 +72,9 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
         }
         min_value = next_min_value;
     }
+
+    encoding_progress = 25;
+    encoding_state_msg = "Building code tree...";
 
     const symbols_length = book_index; // exclusive index
 
@@ -130,6 +150,14 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
         path: Code,
     };
 
+    encoding_progress = 30;
+    encoding_state_msg = "Creating codes...";
+
+    // clear progress bar if it's being printed ahead of printing codes
+    // if (flags.debug and !flags.print_output) {
+    //     try std_out.writer().print("\x1B[4F\x1B[4K", .{});
+    // }
+
     var traversal_stack: [513]?HistoryNode = [_]?HistoryNode{null} ** 513;
     var traversal_stack_top: usize = 1;
     traversal_stack[0] = HistoryNode{
@@ -185,6 +213,10 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
         }
     }
 
+    // if (flags.debug and !flags.print_output) {
+    //     try std_out.writer().print("\n\n", .{});
+    // }
+
     // debug check that there are no colliding prefixes
     if (flags.debug) {
         for (dictionary, 0..) |code_1, i| {
@@ -213,6 +245,9 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
             }
         }
     }
+
+    encoding_progress = 35;
+    encoding_state_msg = "Writing file header...";
 
     // estimate of header length when every unique char is used
     const max_header_length: usize = 7200;
@@ -263,13 +298,19 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
     try bit_stream_writer.flushBits();
     bits_written = if (bits_written % 8 != 0) (bits_written / 8 + 1) * 8 else bits_written;
 
-    // write compressed bits
-    for (text) |char| {
-        const code = dictionary[char];
-        var j: usize = code.length;
-        while (j > 0) : (j -= 1) {
-            try bit_stream_writer.writeBits((code.data >> @as(u5, @truncate(j - 1))) & 1, 1);
-            bits_written += 1;
+    encoding_progress = 40;
+    encoding_state_msg = "Writing compressed text...";
+    const writing_sections = 10;
+    for (0..writing_sections) |i| {
+        encoding_progress = 60 + (100 - 60) * i / writing_sections;
+        // write compressed bits
+        for (text[i * text.len / writing_sections .. (i + 1) * text.len / writing_sections]) |char| {
+            const code = dictionary[char];
+            var j: usize = code.length;
+            while (j > 0) : (j -= 1) {
+                try bit_stream_writer.writeBits((code.data >> @as(u5, @truncate(j - 1))) & 1, 1);
+                bits_written += 1;
+            }
         }
     }
 
@@ -277,6 +318,20 @@ pub fn encode(allocator: Allocator, text: []const u8, out_writer: anytype, std_o
     bits_written = if (bits_written % 8 != 0) (bits_written / 8 + 1) * 8 else bits_written;
     if (flags.write_output) try out_writer.writeAll(out_buffer[0 .. bits_written / 8]);
     if (flags.debug) try std_out.writer().print("\nbits in output: {d}\n", .{bits_written});
+
+    if (!flags.print_output and !flags.debug) {
+        encoding_progress = 100;
+        encoding_state_msg = "Done compressing!";
+        print_progress_thread.?.join();
+    }
+
+    const formatted_original_size = format_file_size(allocator, @floatFromInt(text.len)) catch unreachable;
+    defer allocator.free(formatted_original_size);
+
+    const formatted_compressed_size = format_file_size(allocator, @floatFromInt(bits_written / 8)) catch unreachable;
+    defer allocator.free(formatted_compressed_size);
+
+    std.debug.print("{s} => {s}\n", .{ formatted_original_size, formatted_compressed_size });
 
     return bits_written / 8;
 }
