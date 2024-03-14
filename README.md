@@ -8,7 +8,7 @@ The name is entropy coding + binary trees.
 
 ### Usage
 
-![output](https://github.com/typio/entreepy/assets/26017543/0d2d3034-cb0f-4886-b712-f57435dbe429)
+![output](https://github.com/typio/entreepy/assets/26017543/75444090-547e-4c5b-a139-73918f22c789)
 
 ```
 Entreepy - Text compression tool
