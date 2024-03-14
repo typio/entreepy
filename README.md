@@ -2,11 +2,15 @@ entreepy<br/>
 [![Actions Status](https://github.com/typio/entreepy/workflows/release/badge.svg)](https://github.com/typio/entreepy/actions)
 ====
 
-> ⚡ Fast text compression tool
+> Text compression tool :zap:
 
 The name is entropy coding + binary trees.
 
+It now has a fancy progress bar!
+
 ### Usage
+
+![output](https://github.com/typio/entreepy/assets/26017543/0d2d3034-cb0f-4886-b712-f57435dbe429)
 
 ```
 Entreepy - Text compression tool
